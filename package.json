@@ -1,0 +1,14 @@
+{
+  "name": "hellohoney",
+  "version": "1.0.0",
+  "description": "HelloHoney - Honeypot-based attack detection, monitoring and incident response platform (lab use only)",
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "build": "npm --prefix frontend install && npm --prefix frontend run build && npm --prefix backend install",
+    "start": "node backend/server.js",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "seed": "node database/seed.js"
+  },
+  "private": true
+}

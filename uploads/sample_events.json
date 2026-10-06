@@ -1,0 +1,38 @@
+[
+  {
+    "timestamp": "2026-09-28T10:20:00.000Z",
+    "sourceIP": "198.51.100.99",
+    "sourcePort": 49120,
+    "destinationPort": 22,
+    "service": "SSH",
+    "protocol": "TCP",
+    "eventType": "FAILED_LOGIN",
+    "username": "root",
+    "status": "failed",
+    "severity": "MEDIUM"
+  },
+  {
+    "timestamp": "2026-09-28T10:20:05.000Z",
+    "sourceIP": "198.51.100.99",
+    "sourcePort": 49122,
+    "destinationPort": 22,
+    "service": "SSH",
+    "protocol": "TCP",
+    "eventType": "FAILED_LOGIN",
+    "username": "admin",
+    "status": "failed",
+    "severity": "MEDIUM"
+  },
+  {
+    "timestamp": "2026-09-28T10:21:00.000Z",
+    "sourceIP": "198.51.100.99",
+    "sourcePort": 50110,
+    "destinationPort": 80,
+    "service": "HTTP",
+    "protocol": "TCP",
+    "eventType": "WEB_PROBE",
+    "status": "probed",
+    "severity": "HIGH",
+    "metadata": { "path": "/.env" }
+  }
+]

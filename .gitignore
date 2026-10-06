@@ -1,0 +1,16 @@
+node_modules/
+*/node_modules/
+dist/
+frontend/dist/
+.env
+.env.local
+.env.*.local
+reports/*.pdf
+reports/*.csv
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+Thumbs.db
+

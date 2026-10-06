@@ -1,0 +1,6 @@
+BIND_HOST = "127.0.0.1"
+SSH_PORT = 2222
+HTTP_PORT = 8080
+BACKEND_URL = "http://localhost:5000"
+HONEYPOT_ID = "honeypot-01"
+LAB_MODE = True

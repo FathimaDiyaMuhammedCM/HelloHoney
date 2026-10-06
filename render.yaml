@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: hellohoney
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 8h
+      - key: FRONTEND_URL
+        value: "*"
+      - key: SIMULATION_MODE
+        value: "true"
+      # To use MongoDB Atlas, add your connection string here or in Render dashboard:
+      # - key: MONGO_URI
+      #   value: mongodb+srv://<user>:<password>@cluster.mongodb.net/hellohoney?retryWrites=true&w=majority
