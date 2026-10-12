@@ -2,17 +2,30 @@ const Alert = require('../models/Alert');
 const Event = require('../models/Event');
 const audit = require('../utils/audit');
 
+// Escape user input before building RegExp to prevent ReDoS / regex injection
+function escapeRegex(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Only accept primitive strings for filter values (blocks NoSQL operator objects)
+const str = (v) => (typeof v === 'string' ? v : undefined);
+
 async function list(req, res, next) {
   try {
     const { severity, status, attackType, sourceIP, from, to, q, page = 1, limit = 20 } = req.query;
     const f = {};
-    if (severity) f.severity = severity;
-    if (status) f.status = status;
-    if (attackType) f.attackType = new RegExp(attackType, 'i');
-    if (sourceIP) f.sourceIP = sourceIP;
-    if (from || to) f.timestamp = { ...(from ? { $gte: new Date(from) } : {}), ...(to ? { $lte: new Date(to) } : {}) };
-    if (q) f.$or = [{ alertId: new RegExp(q, 'i') }, { sourceIP: new RegExp(q, 'i') }, { attackType: new RegExp(q, 'i') }];
-    const p = Math.max(1, parseInt(page)), l = Math.min(100, parseInt(limit));
+    if (str(severity)) f.severity = severity;
+    if (str(status)) f.status = status;
+    if (str(attackType)) f.attackType = new RegExp(escapeRegex(attackType), 'i');
+    if (str(sourceIP)) f.sourceIP = sourceIP;
+    if ((typeof from === 'string' && from) || (typeof to === 'string' && to)) {
+      const ts = {};
+      if (typeof from === 'string' && from) ts.$gte = new Date(from);
+      if (typeof to === 'string' && to) ts.$lte = new Date(to);
+      f.timestamp = ts;
+    }
+    if (typeof q === 'string') f.$or = [{ alertId: new RegExp(escapeRegex(q), 'i') }, { sourceIP: new RegExp(escapeRegex(q), 'i') }, { attackType: new RegExp(escapeRegex(q), 'i') }];
+    const p = Math.max(1, parseInt(page, 10) || 1), l = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const [items, total] = await Promise.all([Alert.find(f).sort('-timestamp').skip((p - 1) * l).limit(l).lean(), Alert.countDocuments(f)]);
     res.json({ items, total, page: p, pages: Math.ceil(total / l) });
   } catch (e) { next(e); }
@@ -22,7 +35,7 @@ async function getOne(req, res, next) {
   try {
     const a = await Alert.findOne({ $or: [{ alertId: req.params.id }, { _id: req.params.id.match(/^[0-9a-fA-F]{24}$/) ? req.params.id : undefined }] }).lean();
     if (!a) return res.status(404).json({ error: 'Alert not found' });
-    const events = await Event.find({ eventId: { $in: a.relatedEventIds || [] } }).lean();
+    const events = await Event.find({ eventId: { $in: a.relatedEventIds || [] } }).select('-passwordEcho').lean();
     res.json({ alert: a, events });
   } catch (e) { next(e); }
 }

@@ -1,122 +1,193 @@
-# 🌐 HelloHoney Cloud Deployment Guide
+# 🌐 HelloHoney Deployment Guide
 
-This guide explains how to make **HelloHoney (HoneyWatch SOC)** publicly accessible via cloud hosting platforms.
+HelloHoney is a **lab / demo** SOC platform. The recommended production topology is a **split deploy**:
 
----
+| Component | Host | Source | Notes |
+|---|---|---|---|
+| Backend API + WebSockets (Socket.IO) | **Render** (Node web service) | `backend/` | config: [`render.yaml`](../render.yaml) |
+| Frontend SPA | **Vercel** (static Vite build) | `frontend/` | config: [`frontend/vercel.json`](../frontend/vercel.json) |
+| Honeypot | **NOT deployed** | `honeypot/` | lab-only — never expose to the public internet |
 
-## ⚡ Summary of Changes Made for Cloud Readiness
+The frontend is a static bundle that calls the backend directly using `VITE_API_URL` (REST) and
+`VITE_SOCKET_URL` (Socket.IO). Both hosts deploy from the **same GitHub repository**.
 
-1. **Unified Full-Stack Serving**:
-   - The Node.js backend now serves the compiled React frontend static files from `frontend/dist/` in production.
-   - REST API, WebSockets (`socket.io`), and Frontend SPA run together seamlessly on a single port (`PORT=5000` or cloud-assigned `$PORT`).
-2. **Dynamic Client Configuration**:
-   - `frontend/src/services/api.js` automatically uses relative `/api` or respects `VITE_API_URL`.
-   - `frontend/src/hooks/useRealtime.js` dynamically connects to the current host origin (`window.location.origin`) or `VITE_SOCKET_URL`.
-3. **Production Scripts in Root `package.json`**:
-   - `npm run build`: Installs frontend and backend dependencies and compiles the Vite production bundle.
-   - `npm start`: Starts the backend server.
-4. **Deployment Manifests Included**:
-   - [`render.yaml`](../render.yaml): Blueprint for 1-click deployment on Render.
-   - [`railway.json`](../railway.json): Configuration for Railway.
-   - [`Dockerfile`](../Dockerfile): Multi-stage container build for any Docker-based cloud (Fly.io, AWS ECS, GCP Cloud Run, DigitalOcean).
-   - [`frontend/vercel.json`](../frontend/vercel.json): Routing rewrite rule if hosting frontend on Vercel.
+> ⚠️ **Security notes**
+> - This is a demo with simulated data. Use a strong `JWT_SECRET`, set real passwords, and set
+>   `FRONTEND_URL` to your Vercel origin (avoid `*` in anything long-lived).
+> - The honeypot binds to localhost and must remain local.
+> - Do not commit secrets — API passwords and `MONGO_URI` are set as platform env vars.
 
 ---
 
-## Option 1: Deploy on Render (Recommended, Free Tier)
+## Prerequisites
 
-Render provides free hosting for Web Services with automatic HTTPS.
+- A **GitHub** account (Render and Vercel both deploy from GitHub).
+- This project pushed to a GitHub repository.
+- *(Optional, recommended)* A free **MongoDB Atlas** cluster for persistent data (see
+  [Database](#database-in-memory-vs-mongodb-atlas)).
 
-### Step 1: Push your project to GitHub
-In your project terminal:
+---
+
+## Step 1 — Push the project to GitHub
+
+From the project root:
+
 ```bash
 git add .
-git commit -m "Prepare HelloHoney for cloud deployment"
-# Create a repository on GitHub (e.g. hellohoney), then link and push:
-git remote add origin https://github.com/<YOUR_GITHUB_USERNAME>/<YOUR_REPO_NAME>.git
+git commit -m "HelloHoney: security hardening + dashboard + cloud deploy config"
+
+# Create an empty repo on GitHub (e.g. hellohoney), then:
+git remote add origin https://github.com/<YOUR_GITHUB_USERNAME>/hellohoney.git
+git branch -M main
 git push -u origin main
 ```
 
-### Step 2: Deploy on Render
-1. Go to [Render.com](https://render.com) and log in.
-2. Click **New +** -> **Web Service**.
-3. Select your GitHub repository.
-4. Configure the service settings:
-   - **Name**: `hellohoney` (or your preferred name)
-   - **Environment**: `Node`
-   - **Region**: Closest to you (e.g., Oregon, Frankfurt, Singapore)
-   - **Branch**: `main`
-   - **Build Command**: `npm run build`
-   - **Start Command**: `npm start`
-   - **Instance Type**: `Free`
-5. Under **Environment Variables**, add:
-   - `NODE_ENV`: `production`
-   - `PORT`: `5000`
-   - `JWT_SECRET`: (Click *Generate* or enter a random secure string)
-   - `JWT_EXPIRES_IN`: `8h`
-   - `FRONTEND_URL`: `*`
-   - `SIMULATION_MODE`: `true`
-   *(Optional)* If using MongoDB Atlas, add `MONGO_URI`. If not specified, the backend automatically uses its built-in in-memory database fallback.
-6. Click **Deploy Web Service**.
-7. Once deployed, Render will provide a public URL like:
-   `https://hellohoney-xxxx.onrender.com`
+---
+
+## Step 2 — Deploy the backend on Render
+
+### Option A — Blueprint (uses `render.yaml`) ✅ recommended
+
+1. Go to [render.com](https://render.com) → **New +** → **Blueprint**.
+2. Select your `hellohoney` repository. Render reads [`render.yaml`](../render.yaml) and creates
+   the `hellohoney-api` web service.
+3. When prompted, fill the secret variables (`sync: false`):
+   - `FRONTEND_URL` — your Vercel URL (you can put a placeholder now and update in Step 4)
+   - `SEED_ADMIN_PASSWORD`, `SEED_ANALYST_PASSWORD`, `SEED_VIEWER_PASSWORD`
+4. `JWT_SECRET` is auto-generated; `SEED_DEFAULT_USERS=true` and `SEED_DEMO_DATA=true` are preset.
+5. Click **Apply** / **Deploy**. Wait for “Live”.
+6. Note the URL, e.g. `https://hellohoney-api.onrender.com`.
+7. Verify: open `https://hellohoney-api.onrender.com/api/health` → `{"status":"ok", ...}`.
+
+### Option B — Manual Web Service
+
+| Setting | Value |
+|---|---|
+| Root Directory | *(repo root)* |
+| Environment | Node |
+| Build Command | `npm --prefix backend install` |
+| Start Command | `node backend/server.js` |
+| Health Check Path | `/api/health` |
+
+Environment variables (all required unless noted):
+
+| Variable | Value |
+|---|---|
+| `NODE_ENV` | `production` |
+| `JWT_SECRET` | strong random string (32+ chars) |
+| `JWT_EXPIRES_IN` | `8h` |
+| `FRONTEND_URL` | your Vercel origin (Step 4) |
+| `SIMULATION_MODE` | `true` |
+| `SEED_DEFAULT_USERS` | `true` |
+| `SEED_DEMO_DATA` | `true` |
+| `SEED_ADMIN_PASSWORD` | *choose a strong password* |
+| `SEED_ANALYST_PASSWORD` | *choose a strong password* |
+| `SEED_VIEWER_PASSWORD` | *choose a strong password* |
+| `MONGO_URI` | *(optional)* Atlas connection string |
+
+> **PORT:** do **not** set it — Render injects its own `PORT` and the backend reads `process.env.PORT`.
 
 ---
 
-## Option 2: Deploy on Railway (Free Trial / Pay-as-you-go)
+## Step 3 — Deploy the frontend on Vercel
 
-Railway detects the repository setup and provisions the application automatically.
+1. Go to [vercel.com](https://vercel.com) → **Add New… → Project** → import the same repository.
+2. **Root Directory:** `frontend`
+3. Framework preset: **Vite** (auto-detected). Build `npm run build`, output `dist`.
+4. **Environment Variables** (Production):
+   - `VITE_API_URL` = `https://hellohoney-api.onrender.com/api`
+   - `VITE_SOCKET_URL` = `https://hellohoney-api.onrender.com`
+5. **Deploy.** Note the URL, e.g. `https://hellohoney.vercel.app`.
 
-1. Go to [Railway.app](https://railway.app) and sign in with GitHub.
-2. Click **New Project** -> **Deploy from GitHub repo**.
-3. Select your `hellohoney` repository.
-4. Railway will automatically detect the root [`railway.json`](../railway.json) or [`Dockerfile`](../Dockerfile).
-5. In **Variables**, add:
-   - `NODE_ENV`: `production`
-   - `JWT_SECRET`: A secure random string
-   - `SIMULATION_MODE`: `true`
-6. Go to **Settings** -> **Networking** -> **Generate Domain** to get your public `https://....up.railway.app` URL.
+> Vite inlines `VITE_*` variables **at build time**. If you change them, trigger a new deployment.
 
 ---
 
-## Option 3: Separate Deploy (Frontend on Vercel + Backend on Render/Railway)
+## Step 4 — Wire CORS (connect the two)
 
-If you prefer hosting the React frontend on Vercel:
+Back on **Render** → `hellohoney-api` → **Environment**:
 
-1. Deploy the Backend to Render or Railway as an API service.
-   - Note the backend URL: e.g. `https://hellohoney-api.onrender.com`.
-2. Deploy the Frontend on [Vercel](https://vercel.com):
-   - Import the repository in Vercel.
-   - Set **Root Directory** to `frontend`.
-   - In Environment Variables, set:
-     - `VITE_API_URL`: `https://hellohoney-api.onrender.com/api`
-     - `VITE_SOCKET_URL`: `https://hellohoney-api.onrender.com`
-   - Deploy.
+```
+FRONTEND_URL = https://hellohoney.vercel.app
+```
+
+Save (this redeploys). This allows the REST API **and** the Socket.IO handshake from the frontend.
+Multiple origins can be comma-separated; `*` reflects any origin (fine for a throwaway demo only).
 
 ---
 
-## 🗄️ Database: MongoDB Atlas (Optional, For Persistent Data)
+## Step 5 — Log in
 
-By default, the backend includes an in-memory MongoDB fallback for instant demos. For permanent database persistence across service restarts:
-
-1. Create a free account at [MongoDB Atlas](https://www.mongodb.com/cloud/atlas).
-2. Create a free shared cluster (**M0 Free Tier**).
-3. Under **Database Access**, create a database user (e.g. `hh_admin` + strong password).
-4. Under **Network Access**, click **Add IP Address** -> select **Allow Access from Anywhere** (`0.0.0.0/0`).
-5. Click **Connect** -> **Drivers** (Node.js) -> copy the connection string:
-   `mongodb+srv://hh_admin:<password>@cluster0.xxxx.mongodb.net/hellohoney?retryWrites=true&w=majority`
-6. Add this string as `MONGO_URI` in your Render / Railway environment variables.
-
----
-
-## 🔑 Default Credentials for Login
-
-Once your public URL is live, log in using any of the default pre-seeded accounts:
+Open your Vercel URL and log in with the seeded demo accounts:
 
 | Role | Email | Password |
 |---|---|---|
-| **Admin** | `admin@hellohoney.local` | `Admin123!` |
-| **Analyst** | `analyst@hellohoney.local` | `Analyst123!` |
-| **Viewer** | `viewer@hellohoney.local` | `Viewer123!` |
+| Admin | `admin@hellohoney.local` | your `SEED_ADMIN_PASSWORD` |
+| Analyst | `analyst@hellohoney.local` | your `SEED_ANALYST_PASSWORD` |
+| Viewer | `viewer@hellohoney.local` | your `SEED_VIEWER_PASSWORD` |
 
-> **Tip:** You can immediately test the platform using the **Simulation** buttons on the dashboard (Failed SSH Login, SSH Brute Force, Port Scan, Web Probe, Multi-Stage Attack) to generate live alerts and incident tickets.
+The dashboard opens pre-populated with demo events/alerts/incidents.
+
+---
+
+## Verification checklist
+
+- [ ] `GET https://<backend>/api/health` → `200 {"status":"ok"}`
+- [ ] Frontend URL loads the login page (Vercel).
+- [ ] Login succeeds with the admin account.
+- [ ] Dashboard cards are non-zero (Total Events, Active Alerts, …).
+- [ ] Socket.IO connects (browser console: no CORS/auth errors; live feed updates when you
+      click a **Simulation** button).
+- [ ] `FRONTEND_URL` on Render equals the exact Vercel origin (scheme + host, no trailing slash).
+
+---
+
+## Database: in-memory vs MongoDB Atlas
+
+- **Default (no `MONGO_URI`):** the backend starts an in-memory MongoDB. Data is **lost on every
+  restart/redeploy**, then `SEED_DEMO_DATA=true` re-seeds sample data. Perfect for a demo.
+- **Persistent (recommended):** create a free **M0** cluster at
+  [MongoDB Atlas](https://www.mongodb.com/cloud/atlas):
+  1. Database Access → create a user.
+  2. Network Access → allow `0.0.0.0/0` (or Render egress IPs).
+  3. Connect → Drivers → copy the string and set it as `MONGO_URI` on Render:
+     `mongodb+srv://<user>:<pass>@cluster0.xxxx.mongodb.net/hellohoney?retryWrites=true&w=majority`
+  With Atlas, seeding runs only when the database is **empty**, so real data is never overwritten.
+
+---
+
+## Alternative — single full-stack service (Docker / one host)
+
+A [`Dockerfile`](../Dockerfile) is included that builds the frontend and serves it together with the
+API from one Node process (one port). Use it on any Docker host (Fly.io, Cloud Run, Railway, …).
+On that model, one service serves everything and `FRONTEND_URL` can be its own URL.
+
+---
+
+## Environment variable reference
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `5000` | HTTP port (Render sets this automatically) |
+| `NODE_ENV` | — | `production` disables verbose errors |
+| `MONGO_URI` | *(empty)* | Mongo connection string; falls back to in-memory if unset |
+| `JWT_SECRET` | *(required)* | 32+ char signing secret; server refuses to start without it |
+| `JWT_EXPIRES_IN` | `2h` | Access-token lifetime |
+| `FRONTEND_URL` | `http://localhost:5173` | CORS allowlist (comma-separated) for REST + Socket.IO |
+| `SIMULATION_MODE` | `false` | Enables the lab **Simulation** buttons |
+| `SEED_DEFAULT_USERS` | `false` | Seed admin/analyst/viewer on first start |
+| `SEED_ADMIN_PASSWORD` / `SEED_ANALYST_PASSWORD` / `SEED_VIEWER_PASSWORD` | — | Passwords for the seeded accounts |
+| `SEED_DEMO_DATA` | `false` | Seed sample events/alerts/incidents when the DB is empty |
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| CORS error / Socket.IO won’t connect | `FRONTEND_URL` doesn’t match the Vercel origin exactly. Update it on Render and redeploy. |
+| Login says “No users exist” | `SEED_DEFAULT_USERS=true` plus all three `SEED_*_PASSWORD` must be set before first start. |
+| Dashboard is empty | `SEED_DEMO_DATA=true` (and the DB empty), or use a **Simulation** button. |
+| 401 on every call after a while | Token expired (`JWT_EXPIRES_IN`) or `JWT_SECRET` changed — log in again. |
+| API calls 404 from Vercel | `VITE_API_URL` missing/wrong; set it and **redeploy** (Vite reads it at build time). |
+| “Invalid or expired token” on realtime only | `VITE_SOCKET_URL` missing; the socket must point at the backend, not Vercel. |

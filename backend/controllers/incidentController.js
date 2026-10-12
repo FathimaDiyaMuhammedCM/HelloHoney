@@ -2,13 +2,19 @@ const Incident = require('../models/Incident');
 const { nextId } = require('../utils/ids');
 const audit = require('../utils/audit');
 
+// Escape user input before building RegExp to prevent ReDoS / regex injection
+function escapeRegex(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function list(req, res, next) {
   try {
     const { status, severity, q } = req.query;
     const f = {};
-    if (status) f.status = status;
-    if (severity) f.severity = severity;
-    if (q) f.$or = [{ incidentId: new RegExp(q, 'i') }, { title: new RegExp(q, 'i') }];
+    // Only accept primitive strings (blocks NoSQL operator objects)
+    if (typeof status === 'string' && status) f.status = status;
+    if (typeof severity === 'string' && severity) f.severity = severity;
+    if (typeof q === 'string' && q) f.$or = [{ incidentId: new RegExp(escapeRegex(q), 'i') }, { title: new RegExp(escapeRegex(q), 'i') }];
     const items = await Incident.find(f).sort('-createdAt').limit(100).lean();
     res.json({ items, total: items.length });
   } catch (e) { next(e); }

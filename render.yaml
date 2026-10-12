@@ -1,24 +1,42 @@
 services:
+  # Backend + WebSocket API.
+  # Deploy this to Render. The React frontend is hosted separately on Vercel
+  # (see frontend/vercel.json) and talks to this service via VITE_API_URL /
+  # VITE_SOCKET_URL.
   - type: web
-    name: hellohoney
+    name: hellohoney-api
     runtime: node
     plan: free
     region: oregon
-    buildCommand: npm run build
-    startCommand: npm start
+    buildCommand: npm --prefix backend install
+    startCommand: node backend/server.js
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 5000
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_EXPIRES_IN
         value: 8h
+      # Set this to the Vercel frontend origin after the first frontend deploy,
+      # e.g. https://hellohoney.vercel.app  (comma-separate multiple origins).
       - key: FRONTEND_URL
-        value: "*"
+        sync: false
       - key: SIMULATION_MODE
         value: "true"
-      # To use MongoDB Atlas, add your connection string here or in Render dashboard:
+      # Seed demo accounts + demo dashboard data on first start (DB empty).
+      - key: SEED_DEFAULT_USERS
+        value: "true"
+      - key: SEED_DEMO_DATA
+        value: "true"
+      # Passwords are set as secret env vars in the Render dashboard (sync:false).
+      - key: SEED_ADMIN_PASSWORD
+        sync: false
+      - key: SEED_ANALYST_PASSWORD
+        sync: false
+      - key: SEED_VIEWER_PASSWORD
+        sync: false
+      # Optional: persistent MongoDB Atlas connection string. Without it the
+      # backend uses its built-in in-memory DB (data resets on each restart).
       # - key: MONGO_URI
-      #   value: mongodb+srv://<user>:<password>@cluster.mongodb.net/hellohoney?retryWrites=true&w=majority
+      #   sync: false

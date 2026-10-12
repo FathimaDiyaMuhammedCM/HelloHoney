@@ -6,7 +6,20 @@ export const useAuth = () => useContext(AuthCtx);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('hh_user') || 'null'); } catch { return null; }
+    try {
+      const stored = JSON.parse(localStorage.getItem('hh_user') || 'null');
+      // Validate stored token hasn't expired
+      const token = localStorage.getItem('hh_token');
+      if (token) {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        if (payload.exp && payload.exp * 1000 < Date.now()) {
+          localStorage.removeItem('hh_token');
+          localStorage.removeItem('hh_user');
+          return null;
+        }
+      }
+      return stored;
+    } catch { return null; }
   });
   const login = async (email, password) => {
     const { data } = await api.post('/auth/login', { email, password });

@@ -13,7 +13,11 @@ export function useRealtime(onUpdate, enabled = true) {
       import.meta.env.VITE_SOCKET_URL ||
       (import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '') : '') ||
       (typeof window !== 'undefined' && window.location.port === '5173' ? 'http://localhost:5000' : '/');
-    const socket = io(socketUrl, { transports: ['websocket', 'polling'] });
+    const token = localStorage.getItem('hh_token');
+    const socket = io(socketUrl, {
+      transports: ['websocket', 'polling'],
+      auth: { token }
+    });
     socket.on('new_event', (d) => fnRef.current && fnRef.current('event', d));
     socket.on('new_alert', (d) => fnRef.current && fnRef.current('alert', d));
     socket.on('incident_update', (d) => fnRef.current && fnRef.current('incident', d));

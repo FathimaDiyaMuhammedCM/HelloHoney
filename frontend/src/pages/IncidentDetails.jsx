@@ -15,7 +15,7 @@ export default function IncidentDetails() {
   return <div className="layout"><Sidebar /><div className="main"><Navbar />
     <div className="content"><Link to="/incidents">← Incidents</Link><h2>{inc.incidentId}: {inc.title}</h2>
       <div className="card"><div className="kv">
-        <b>Severity / Risk</b><span>{inc.severity} / {inc.riskScore} (HoneyWatch Risk Score)</span>
+        <b>Severity / Risk</b><span>{inc.severity} / {inc.riskScore} (HelloHoney Risk Score)</span>
         <b>Status</b><span>{inc.status}</span>
         <b>Source IPs</b><span>{(inc.sourceIPs || []).join(', ')}</span>
         <b>Alerts</b><span>{(inc.relatedAlertIds || []).join(', ')}</span>

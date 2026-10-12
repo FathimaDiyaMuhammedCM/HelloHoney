@@ -1,7 +1,7 @@
 # HelloHoney — B.Tech Project Material (abstract, objectives, methodology, viva pointers)
 
 ## Abstract
-HelloHoney (HoneyWatch SOC) is a defensive lab platform that deploys a controlled SSH/HTTP honeypot, normalizes suspicious activity into security events, applies a modular rule-based detection engine, correlates campaigns into alerts and incidents, scores risk with a project-defined HoneyWatch Risk Score, and presents SOC monitoring, investigation, analytics and PDF/CSV reporting with JWT authentication, RBAC and audit logging.
+HelloHoney (HelloHoney SOC) is a defensive lab platform that deploys a controlled SSH/HTTP honeypot, normalizes suspicious activity into security events, applies a modular rule-based detection engine, correlates campaigns into alerts and incidents, scores risk with a project-defined HelloHoney Risk Score, and presents SOC monitoring, investigation, analytics and PDF/CSV reporting with JWT authentication, RBAC and audit logging.
 
 ## Problem statement
 Small labs and student SOCs lack an affordable, self-contained way to observe attacker techniques (brute force, scanning, web recon) and practise detection → triage → incident response.

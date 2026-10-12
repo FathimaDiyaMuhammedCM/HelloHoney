@@ -1,4 +1,4 @@
-# 🛡️ HELLOHONEY (HONEYWATCH SOC)
+# 🛡️ HELLOHONEY (HELLOHONEY SOC)
 
 Defensive honeypot-based attack detection, monitoring & incident response platform for an **authorized local lab only**.
 
@@ -9,7 +9,7 @@ Test machine -> SSH/HTTP honeypot (Python, localhost:2222/8080)
   -> Event collector (POST /api/ingest/events, normalized)
   -> MongoDB (or in-memory Mongo for lab demo)
   -> Detection engine (Node service + Python mirror)
-  -> Alerts -> Incident correlation -> Risk score (HoneyWatch Risk Score, project-defined)
+  -> Alerts -> Incident correlation -> Risk score (HelloHoney Risk Score, project-defined)
   -> SOC dashboard (React) -> Reports (PDF/CSV)
 ```
 
@@ -20,15 +20,21 @@ Test machine -> SSH/HTTP honeypot (Python, localhost:2222/8080)
 ```bash
 # backend
 cd backend && npm install && node server.js
-# seed demo data (optional)
-node ../database/seed.js
+# Seed demo data (optional) — set strong passwords first:
+# SEED_ADMIN_PASSWORD=... SEED_ANALYST_PASSWORD=... SEED_VIEWER_PASSWORD=... node ../database/seed.js
 # frontend
 cd ../frontend && npm install && npm run dev
 # honeypot (lab, localhost only)
 cd ../honeypot && python main.py
 ```
 
-Default logins: `admin@hellohoney.local / Admin123!`, `analyst@hellohoney.local / Analyst123!`, `viewer@hellohoney.local / Viewer123!`.
+**Account creation:** No default accounts are created automatically. To create the initial demo accounts, either:
+- Run the seed script with `SEED_ADMIN_PASSWORD`, `SEED_ANALYST_PASSWORD`, and `SEED_VIEWER_PASSWORD` environment variables set, or
+- Start the backend with `SEED_DEFAULT_USERS=true` plus those three password variables in `.env`.
+
+Passwords must be at least 8 characters and contain uppercase, lowercase, and a number. New self-registered accounts always receive the **VIEWER** role; promote to ANALYST/ADMIN via an existing admin.
+
+**Demo data:** set `SEED_DEMO_DATA=true` to auto-populate the dashboard with sample events, alerts and incidents when the database is empty (it never overwrites existing/uploaded data). This is handy in lab mode where the in-memory database resets on each restart.
 
 ## Acceptance demo
 1. Start backend (`node backend/server.js`), frontend (`npm run dev` in frontend).

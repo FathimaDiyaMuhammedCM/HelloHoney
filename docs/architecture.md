@@ -1,7 +1,7 @@
 # HelloHoney System Documentation
 
 ## 01 Introduction
-HelloHoney (HoneyWatch SOC) is a defensive lab platform: a controlled honeypot observes suspicious activity; a detection engine fires alerts; correlation builds incidents; a SOC dashboard supports investigation and reporting.
+HelloHoney (HelloHoney SOC) is a defensive lab platform: a controlled honeypot observes suspicious activity; a detection engine fires alerts; correlation builds incidents; a SOC dashboard supports investigation and reporting.
 
 ## 02-06 Problem / Existing / Proposed / Objectives / Scope
 Problem: student labs lack an affordable way to practise detection → triage → response.
@@ -22,7 +22,7 @@ User, Event (indexed timestamp/sourceIP/eventType/service/severity), Alert, Inci
 
 ## 12-14 Detection engine / Rules / Risk scoring
 Rules: SSH Brute Force (>5 fails/60s/HIGH), Port Scan (3+ ports/60s), Web Recon (3+ paths/120s), Rapid Connections (10+/30s), Multi-Stage (probe+SSH+fails/10min). Dedupe per rule+IP+window.
-Risk: HoneyWatch Risk Score (project-defined): failed login +5, probe +10, multi-type +15, high alert +20, repeated +10, cap 100; LOW 0–20, MEDIUM 21–50, HIGH 51–75, CRITICAL 76–100.
+Risk: HelloHoney Risk Score (project-defined): failed login +5, probe +10, multi-type +15, high alert +20, repeated +10, cap 100; LOW 0–20, MEDIUM 21–50, HIGH 51–75, CRITICAL 76–100.
 
 ## 15 Incident management
 OPEN → INVESTIGATING → RESOLVED; sourceIPs, linked alerts/events, assignee, timeline, notes.

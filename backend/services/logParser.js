@@ -1,4 +1,4 @@
-// Log file parser supporting Syslog, CSV, TSV, JSON, JSON-Lines, Common Web Log, and Raw Honeypot logs.
+// Log file parser supporting Syslog, CSV, TSV, JSON, JSON-Lines, Common Web Log, KV/Firewall, PCAP, and Raw Honeypot logs.
 "use strict";
 
 const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
@@ -10,11 +10,12 @@ function sanitizeEventType(type) {
   if (!type) return 'CONNECTION';
   const upper = String(type).trim().toUpperCase().replace(/[-\s]/g, '_');
   if (VALID_EVENT_TYPES.has(upper)) return upper;
-  if (upper.includes('FAIL') || upper.includes('INVALID') || upper.includes('AUTH') || upper.includes('REJECT') || upper.includes('DENY')) return 'FAILED_LOGIN';
+  if (upper.includes('FAIL') || upper.includes('INVALID') || upper.includes('AUTH') || upper.includes('REJECT') || upper.includes('DENY') || upper.includes('BRUTE') || upper.includes('BAD_PASS')) return 'FAILED_LOGIN';
   if (upper.includes('PORT') || upper.includes('SCAN') || upper.includes('PROBE')) return 'PORT_PROBE';
   if (upper.includes('WEB') || upper.includes('HTTP') || upper.includes('URL') || upper.includes('CGI')) return 'WEB_PROBE';
-  if (upper.includes('DISCONNECT') || upper.includes('CLOSE') || upper.includes('BYE')) return 'DISCONNECT';
+  if (upper.includes('DISCONNECT') || upper.includes('CLOSE') || upper.includes('BYE') || upper.includes('EXIT')) return 'DISCONNECT';
   if (upper.includes('ATTACK') || upper.includes('EXPLOIT') || upper.includes('SUSPICIOUS') || upper.includes('MALWARE')) return 'SUSPICIOUS_REQUEST';
+  if (upper.includes('TEST') || upper.includes('SUCCESS') || upper.includes('ACCEPT')) return 'TEST_LOGIN';
   return 'CONNECTION';
 }
 
@@ -22,6 +23,11 @@ function sanitizeSeverity(sev, eventType) {
   if (sev) {
     const s = String(sev).trim().toUpperCase();
     if (VALID_SEVERITIES.has(s)) return s;
+    if (s.includes('CRIT') || s.includes('FATAL') || s.includes('EMERG')) return 'CRITICAL';
+    if (s.includes('HIGH') || s.includes('ERR')) return 'HIGH';
+    if (s.includes('MED') || s.includes('WARN')) return 'MEDIUM';
+    if (s.includes('LOW') || s.includes('NOTE')) return 'LOW';
+    if (s.includes('INFO') || s.includes('DEBUG')) return 'INFO';
   }
   if (eventType === 'SUSPICIOUS_REQUEST') return 'HIGH';
   if (eventType === 'FAILED_LOGIN' || eventType === 'PORT_PROBE' || eventType === 'WEB_PROBE') return 'MEDIUM';
@@ -56,7 +62,6 @@ function parseSyslogDate(monthStr, dayStr, timeStr) {
   const day = parseInt(dayStr, 10);
   const [h, m, s] = timeStr.split(':').map(Number);
   const date = new Date(now.getFullYear(), month, day, h || 0, m || 0, s || 0);
-  // If date is in the future by > 1 day, assume previous year
   if (date > new Date(now.getTime() + 86400000)) {
     date.setFullYear(now.getFullYear() - 1);
   }
@@ -221,7 +226,39 @@ function parseSyslogLine(line) {
     };
   }
 
-  // Fallback: If line contains an IP address, extract it as an event
+  // Key=Value format (Firewall / iptables / Fortinet / ufw / Suricata / Palo Alto logs)
+  if (cleanLine.includes('=') && (cleanLine.includes('SRC=') || cleanLine.includes('src=') || cleanLine.includes('ip=') || cleanLine.includes('from='))) {
+    const kvMatch = (key) => {
+      const m = new RegExp(`(?:^|[\\s,;])${key}=([\\S]+)`, 'i').exec(cleanLine);
+      return m ? m[1].replace(/['"]/g, '') : null;
+    };
+    const src = kvMatch('src') || kvMatch('source') || kvMatch('src_ip') || kvMatch('ip') || kvMatch('from') || cleanLine.match(IP_RE)?.[0];
+    const dst = kvMatch('dst') || kvMatch('destination') || kvMatch('dst_ip') || kvMatch('to') || '127.0.0.1';
+    const spt = parseInt(kvMatch('spt') || kvMatch('sport') || kvMatch('src_port') || '0', 10);
+    const dpt = parseInt(kvMatch('dpt') || kvMatch('dport') || kvMatch('dst_port') || '22', 10);
+    const proto = (kvMatch('proto') || kvMatch('protocol') || 'TCP').toUpperCase();
+    const action = (kvMatch('action') || kvMatch('status') || kvMatch('msg') || '').toLowerCase();
+    const isDrop = action.includes('drop') || action.includes('block') || action.includes('deny') || action.includes('reject');
+
+    if (src) {
+      return {
+        timestamp: ts,
+        sourceIP: src,
+        sourcePort: isNaN(spt) ? undefined : spt,
+        destinationIP: dst,
+        destinationPort: isNaN(dpt) ? 22 : dpt,
+        service: dpt === 80 || dpt === 8080 || dpt === 443 ? 'HTTP' : (dpt === 22 ? 'SSH' : 'TCP'),
+        protocol: proto,
+        eventType: isDrop ? 'PORT_PROBE' : 'CONNECTION',
+        status: isDrop ? 'probed' : 'connected',
+        severity: isDrop ? 'MEDIUM' : 'INFO',
+        sessionId: 'KV-' + (simpleHash(cleanLine) & 0xfffffff),
+        metadata: { raw: cleanLine, logSource: 'kv' }
+      };
+    }
+  }
+
+  // Fallback 1: If line contains an IP address, extract it as an event
   const ipMatch = cleanLine.match(IP_RE);
   if (ipMatch) {
     const sip = ipMatch[0];
@@ -268,61 +305,105 @@ function parseSyslogLine(line) {
     };
   }
 
+  // Fallback 2: Recognizable security keywords even without explicit IP
+  const lower = cleanLine.toLowerCase();
+  if (lower.includes('fail') || lower.includes('invalid user') || lower.includes('attack') || lower.includes('probe') || lower.includes('unauthorized') || lower.includes('brute force')) {
+    const isFail = lower.includes('fail') || lower.includes('invalid') || lower.includes('unauth');
+    const isProbe = lower.includes('probe') || lower.includes('scan');
+    return {
+      timestamp: ts,
+      sourceIP: '127.0.0.1',
+      destinationPort: 22,
+      service: lower.includes('http') || lower.includes('web') ? 'HTTP' : 'SSH',
+      protocol: 'TCP',
+      eventType: isFail ? 'FAILED_LOGIN' : (isProbe ? 'PORT_PROBE' : 'SUSPICIOUS_REQUEST'),
+      status: isFail ? 'failed' : 'probed',
+      severity: isFail || isProbe ? 'MEDIUM' : 'HIGH',
+      sessionId: 'GEN-' + (simpleHash(cleanLine) & 0xfffffff),
+      metadata: { raw: cleanLine, logSource: 'generic' }
+    };
+  }
+
   return null;
 }
 
 function parseCsv(text) {
   const rows = [];
   const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return rows;
+  if (lines.length === 0) return rows;
 
   // Determine delimiter
   const first = lines[0];
   const delim = first.includes('\t') ? '\t' : (first.includes(';') ? ';' : ',');
 
-  const headers = first.split(delim).map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
+  const rawHeaders = first.split(delim).map(h => h.trim().replace(/^["']|["']$/g, ''));
+  const normHeaders = rawHeaders.map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
 
-  function findCol(keywords) {
-    return headers.findIndex(h => keywords.some(k => h === k || h.includes(k)));
+  function findCol(exactList, subList = []) {
+    for (const key of exactList) {
+      const idx = normHeaders.indexOf(key);
+      if (idx >= 0) return idx;
+    }
+    for (const sub of subList) {
+      const idx = normHeaders.findIndex(h => h.includes(sub));
+      if (idx >= 0) return idx;
+    }
+    return -1;
   }
 
-  const ipIdx = findCol(['sourceip', 'src_ip', 'source_ip', 'ip', 'client_ip', 'source', 'host', 'attacker']);
-  const timeIdx = findCol(['timestamp', 'time', 'date', 'datetime', 'logged_at', 'created_at']);
-  const eventIdx = findCol(['eventtype', 'event_type', 'type', 'action', 'activity', 'event']);
-  const serviceIdx = findCol(['service', 'app', 'protocol_service']);
+  const ipIdx = findCol(['sourceip', 'srcip', 'source', 'clientip', 'attackerip', 'src', 'attacker'], ['sourceip', 'srcip', 'clientip', 'ip']);
+  const destIpIdx = findCol(['destinationip', 'dstip', 'targetip', 'serverip', 'destip', 'dst', 'target']);
+  const timeIdx = findCol(['timestamp', 'time', 'date', 'datetime', 'loggedat', 'createdat', 'logtime']);
+  const eventIdx = findCol(['eventtype', 'event', 'type', 'action', 'activity', 'attacktype']);
+  const serviceIdx = findCol(['service', 'app', 'protocolservice', 'application']);
   const protoIdx = findCol(['protocol', 'proto']);
-  const userIdx = findCol(['username', 'user', 'account', 'login']);
-  const statusIdx = findCol(['status', 'outcome', 'result', 'state']);
-  const sevIdx = findCol(['severity', 'level', 'priority']);
-  const sportIdx = findCol(['sourceport', 'src_port', 'sport']);
-  const dportIdx = findCol(['destinationport', 'dst_port', 'dport', 'port']);
+  const userIdx = findCol(['username', 'user', 'account', 'login', 'srcuser']);
+  const statusIdx = findCol(['status', 'outcome', 'result', 'state', 'actionresult']);
+  const sevIdx = findCol(['severity', 'level', 'priority', 'threatlevel']);
+  const sportIdx = findCol(['sourceport', 'srcport', 'sport', 'source_port']);
+  let dportIdx = findCol(['destinationport', 'dstport', 'dport', 'destport']);
+  if (dportIdx === -1) {
+    const genericPortIdx = normHeaders.indexOf('port');
+    if (genericPortIdx >= 0 && genericPortIdx !== sportIdx) dportIdx = genericPortIdx;
+  }
 
-  for (let i = 1; i < lines.length; i++) {
+  const isHeader = ipIdx >= 0 || timeIdx >= 0 || eventIdx >= 0 || normHeaders.includes('timestamp') || normHeaders.includes('eventtype') || normHeaders.includes('sourceip');
+  const startLine = isHeader ? 1 : 0;
+
+  for (let i = startLine; i < lines.length; i++) {
     const line = lines[i];
     if (!line.trim()) continue;
     const vals = line.split(delim).map(v => v.trim().replace(/^["']|["']$/g, ''));
-    if (!vals.length) continue;
+    if (!vals.length || (vals.length === 1 && !vals[0])) continue;
 
-    const sip = (ipIdx >= 0 ? vals[ipIdx] : '') || line.match(IP_RE)?.[0] || '127.0.0.1';
-    let ts = (timeIdx >= 0 ? vals[timeIdx] : '') || new Date().toISOString();
-    try { ts = new Date(ts).toISOString(); } catch (_) { ts = new Date().toISOString(); }
+    const sip = (ipIdx >= 0 && vals[ipIdx] ? vals[ipIdx] : '') || line.match(IP_RE)?.[0] || '127.0.0.1';
+    const dip = (destIpIdx >= 0 && vals[destIpIdx] ? vals[destIpIdx] : '') || '127.0.0.1';
+    let ts = (timeIdx >= 0 && vals[timeIdx] ? vals[timeIdx] : '') || new Date().toISOString();
+    try {
+      const d = new Date(ts);
+      ts = isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+    } catch (_) { ts = new Date().toISOString(); }
 
-    const rawEvType = eventIdx >= 0 ? vals[eventIdx] : '';
-    const rawSev = sevIdx >= 0 ? vals[sevIdx] : '';
+    const rawEvType = eventIdx >= 0 && vals[eventIdx] ? vals[eventIdx] : '';
+    const rawSev = sevIdx >= 0 && vals[sevIdx] ? vals[sevIdx] : '';
     const evType = sanitizeEventType(rawEvType || 'CONNECTION');
     const sev = sanitizeSeverity(rawSev, evType);
-    const service = (serviceIdx >= 0 ? vals[serviceIdx] : '') || (evType === 'WEB_PROBE' ? 'HTTP' : 'SSH');
-    const status = (statusIdx >= 0 ? vals[statusIdx] : '') || (evType === 'FAILED_LOGIN' ? 'failed' : 'connected');
+    const service = (serviceIdx >= 0 && vals[serviceIdx] ? vals[serviceIdx] : '') || (evType === 'WEB_PROBE' ? 'HTTP' : 'SSH');
+    const status = (statusIdx >= 0 && vals[statusIdx] ? vals[statusIdx] : '') || (evType === 'FAILED_LOGIN' ? 'failed' : 'connected');
+
+    const sp = sportIdx >= 0 ? parseInt(vals[sportIdx], 10) : undefined;
+    const dp = dportIdx >= 0 ? parseInt(vals[dportIdx], 10) : (service === 'HTTP' ? 80 : 22);
 
     rows.push({
       timestamp: ts,
       sourceIP: sip,
-      sourcePort: sportIdx >= 0 ? parseInt(vals[sportIdx], 10) || 0 : 0,
-      destinationPort: dportIdx >= 0 ? parseInt(vals[dportIdx], 10) || (service === 'HTTP' ? 80 : 22) : (service === 'HTTP' ? 80 : 22),
+      sourcePort: isNaN(sp) ? undefined : sp,
+      destinationIP: dip,
+      destinationPort: isNaN(dp) ? (service === 'HTTP' ? 80 : 22) : dp,
       service,
-      protocol: (protoIdx >= 0 ? vals[protoIdx] : '') || 'TCP',
+      protocol: (protoIdx >= 0 && vals[protoIdx] ? vals[protoIdx] : '') || 'TCP',
       eventType: evType,
-      username: userIdx >= 0 ? vals[userIdx] : undefined,
+      username: userIdx >= 0 && vals[userIdx] ? vals[userIdx] : undefined,
       status,
       severity: sev,
       sessionId: 'CSV-' + (simpleHash(line) & 0xfffffff),
@@ -335,26 +416,42 @@ function parseCsv(text) {
 
 function normalizeJsonEvent(obj) {
   if (!obj || typeof obj !== 'object') return null;
+  // If wrapped in _source (Elasticsearch) or event (Suricata/ECS)
+  if (obj._source && typeof obj._source === 'object') obj = { ...obj, ...obj._source };
+  if (obj.event && typeof obj.event === 'object') obj = { ...obj, ...obj.event };
 
-  const sip = obj.sourceIP || obj.src_ip || obj.source_ip || obj.ip || obj.client_ip || obj.host || '127.0.0.1';
-  let ts = obj.timestamp || obj.time || obj.date || obj['@timestamp'] || new Date().toISOString();
-  try { ts = new Date(ts).toISOString(); } catch (_) { ts = new Date().toISOString(); }
+  const sip = obj.sourceIP || obj.src_ip || obj.source_ip || obj.ip || obj.client_ip || obj.clientIp || obj.host || obj.src || obj.attacker || '127.0.0.1';
+  const dip = obj.destinationIP || obj.dst_ip || obj.dest_ip || obj.target_ip || obj.dst || obj.destination || '127.0.0.1';
 
-  const evType = sanitizeEventType(obj.eventType || obj.event_type || obj.type || obj.action || obj.event || 'CONNECTION');
-  const sev = sanitizeSeverity(obj.severity || obj.level || obj.priority, evType);
-  const service = obj.service || (evType === 'WEB_PROBE' ? 'HTTP' : 'SSH');
+  let rawTs = obj.timestamp || obj.time || obj.date || obj['@timestamp'] || obj.logTime || obj.created_at || new Date().toISOString();
+  let ts = new Date().toISOString();
+  try {
+    const d = new Date(rawTs);
+    ts = isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+  } catch (_) { ts = new Date().toISOString(); }
+
+  const rawEvType = obj.eventType || obj.event_type || obj.type || obj.action || obj.eventid || obj.event_id || obj.name || (obj.alert ? obj.alert.signature : '');
+  const evType = sanitizeEventType(rawEvType || 'CONNECTION');
+
+  const rawSev = obj.severity || obj.level || obj.priority || (obj.alert ? obj.alert.severity : '');
+  const sev = sanitizeSeverity(rawSev, evType);
+
+  const sp = obj.sourcePort != null ? Number(obj.sourcePort) : (obj.src_port != null ? Number(obj.src_port) : (obj.sport != null ? Number(obj.sport) : undefined));
+  const dp = obj.destinationPort != null ? Number(obj.destinationPort) : (obj.dst_port != null ? Number(obj.dst_port) : (obj.dport != null ? Number(obj.dport) : (evType === 'WEB_PROBE' ? 80 : 22)));
+
+  const service = obj.service || (obj.proto === 'http' || dp === 80 || dp === 8080 || dp === 443 ? 'HTTP' : (dp === 22 || dp === 2222 ? 'SSH' : 'TCP'));
 
   return {
     ...obj,
-    eventId: obj.eventId,
     timestamp: ts,
     sourceIP: String(sip),
-    sourcePort: obj.sourcePort ? Number(obj.sourcePort) : (obj.src_port ? Number(obj.src_port) : undefined),
-    destinationPort: obj.destinationPort ? Number(obj.destinationPort) : (obj.dst_port ? Number(obj.dst_port) : (service === 'HTTP' ? 80 : 22)),
+    destinationIP: String(dip),
+    sourcePort: isNaN(sp) ? undefined : sp,
+    destinationPort: isNaN(dp) ? (service === 'HTTP' ? 80 : 22) : dp,
     service,
     protocol: obj.protocol || obj.proto || 'TCP',
     eventType: evType,
-    username: obj.username || obj.user,
+    username: obj.username || obj.user || obj.account || obj.login,
     passwordEcho: obj.passwordEcho || (obj.password ? `len=${String(obj.password).length} sha-prefix=***` : undefined),
     status: obj.status || (evType === 'FAILED_LOGIN' ? 'failed' : 'connected'),
     severity: sev,
@@ -365,16 +462,20 @@ function normalizeJsonEvent(obj) {
 
 function parseJson(text) {
   const trimmed = text.trim();
-  // 1. Try full JSON parse (Array or Object)
+  // 1. Try full JSON parse
   try {
     const parsed = JSON.parse(trimmed);
     if (Array.isArray(parsed)) {
       return parsed.map(normalizeJsonEvent).filter(Boolean);
     }
     if (parsed && typeof parsed === 'object') {
-      if (Array.isArray(parsed.events)) return parsed.events.map(normalizeJsonEvent).filter(Boolean);
-      if (Array.isArray(parsed.logs)) return parsed.logs.map(normalizeJsonEvent).filter(Boolean);
-      if (Array.isArray(parsed.data)) return parsed.data.map(normalizeJsonEvent).filter(Boolean);
+      const arrayKeys = ['events', 'logs', 'data', 'records', 'items', 'results', 'hits', 'logEvents'];
+      for (const k of arrayKeys) {
+        if (Array.isArray(parsed[k])) return parsed[k].map(normalizeJsonEvent).filter(Boolean);
+      }
+      if (parsed.hits && Array.isArray(parsed.hits.hits)) {
+        return parsed.hits.hits.map(normalizeJsonEvent).filter(Boolean);
+      }
       const ev = normalizeJsonEvent(parsed);
       return ev ? [ev] : [];
     }
@@ -394,9 +495,75 @@ function parseJson(text) {
   return rows;
 }
 
-function parse(text) {
-  if (!text || typeof text !== 'string') return [];
-  const trimmed = text.trim();
+function parsePcap(buffer) {
+  if (!buffer || buffer.length < 24) return [];
+  const magic = buffer.readUInt32LE(0);
+  let isLe = true;
+  if (magic === 0xa1b2c3d4) isLe = true;
+  else if (magic === 0xd4c3b2a1) isLe = false;
+  else return [];
+
+  const events = [];
+  let offset = 24;
+  while (offset + 16 <= buffer.length && events.length < 500) {
+    const tsSec = isLe ? buffer.readUInt32LE(offset) : buffer.readUInt32BE(offset);
+    const inclLen = isLe ? buffer.readUInt32LE(offset + 8) : buffer.readUInt32BE(offset + 8);
+    offset += 16;
+    if (offset + inclLen > buffer.length) break;
+
+    const pkt = buffer.subarray(offset, offset + inclLen);
+    offset += inclLen;
+
+    // Check Ethernet IPv4 (EtherType 0x0800 at offset 12)
+    if (pkt.length >= 34 && pkt[12] === 0x08 && pkt[13] === 0x00) {
+      const ipOffset = 14;
+      const proto = pkt[ipOffset + 9]; // 6=TCP, 17=UDP
+      const srcIP = `${pkt[ipOffset + 12]}.${pkt[ipOffset + 13]}.${pkt[ipOffset + 14]}.${pkt[ipOffset + 15]}`;
+      const dstIP = `${pkt[ipOffset + 16]}.${pkt[ipOffset + 17]}.${pkt[ipOffset + 18]}.${pkt[ipOffset + 19]}`;
+      const ihl = (pkt[ipOffset] & 0x0f) * 4;
+      const transOffset = ipOffset + ihl;
+
+      if (pkt.length >= transOffset + 4) {
+        const sport = (pkt[transOffset] << 8) | pkt[transOffset + 1];
+        const dport = (pkt[transOffset + 2] << 8) | pkt[transOffset + 3];
+        const srv = dport === 80 || dport === 8080 || dport === 443 ? 'HTTP' : (dport === 22 || dport === 2222 ? 'SSH' : 'TCP');
+        events.push({
+          timestamp: new Date(tsSec * 1000).toISOString(),
+          sourceIP: srcIP,
+          sourcePort: sport,
+          destinationIP: dstIP,
+          destinationPort: dport,
+          service: srv,
+          protocol: proto === 6 ? 'TCP' : (proto === 17 ? 'UDP' : 'IP'),
+          eventType: 'CONNECTION',
+          status: 'connected',
+          severity: 'INFO',
+          sessionId: `PCAP-${events.length}`,
+          metadata: { logSource: 'pcap', packetSize: inclLen }
+        });
+      }
+    }
+  }
+  return events;
+}
+
+function parse(textOrBuffer) {
+  if (!textOrBuffer) return [];
+
+  // Buffer check for PCAP
+  if (Buffer.isBuffer(textOrBuffer)) {
+    if (textOrBuffer.length >= 4) {
+      const magic = textOrBuffer.readUInt32LE(0);
+      if (magic === 0xa1b2c3d4 || magic === 0xd4c3b2a1) {
+        return parsePcap(textOrBuffer);
+      }
+    }
+    textOrBuffer = textOrBuffer.toString('utf8');
+  }
+
+  if (typeof textOrBuffer !== 'string') return [];
+  // Strip UTF-8 BOM if present
+  let trimmed = textOrBuffer.replace(/^\uFEFF/, '').trim();
   if (!trimmed) return [];
 
   // 1. Check if it's JSON
@@ -411,7 +578,8 @@ function parse(text) {
   const isDelimited = firstLine.includes(',') || firstLine.includes('\t') || firstLine.includes(';');
   const hasCsvHeaders = isDelimited && (
     firstLower.includes('ip') || firstLower.includes('source') || firstLower.includes('time') ||
-    firstLower.includes('date') || firstLower.includes('event') || firstLower.includes('user')
+    firstLower.includes('date') || firstLower.includes('event') || firstLower.includes('user') ||
+    firstLower.includes('service') || firstLower.includes('port')
   );
 
   if (hasCsvHeaders) {
@@ -426,14 +594,19 @@ function parse(text) {
     const ev = parseSyslogLine(line);
     if (ev) events.push(ev);
   }
+  if (events.length > 0) return events;
 
-  // 4. If nothing parsed yet, check if any line can be parsed via JSON lines
-  if (!events.length) {
-    const jsonLines = parseJson(trimmed);
-    if (jsonLines.length > 0) return jsonLines;
+  // 4. Try JSON lines
+  const jsonLines = parseJson(trimmed);
+  if (jsonLines.length > 0) return jsonLines;
+
+  // 5. If comma delimited, attempt raw CSV without headers
+  if (isDelimited) {
+    const fallbackCsv = parseCsv(trimmed);
+    if (fallbackCsv.length > 0) return fallbackCsv;
   }
 
-  return events;
+  return [];
 }
 
-module.exports = { parse, parseSyslogLine, parseCsv, parseJson, sanitizeEventType, sanitizeSeverity };
+module.exports = { parse, parseSyslogLine, parseCsv, parseJson, parsePcap, sanitizeEventType, sanitizeSeverity };

@@ -15,7 +15,7 @@
 13. Multi-stage? — Probe + SSH + ≥3 failed logins in 10 min → HIGH + incident.
 14. How do you avoid duplicate alerts? — Dedupe OPEN alert same rule+IP within window.
 15. What is correlation? — Group by IP/session/time into one campaign instead of N isolated events.
-16. HoneyWatch Risk Score? — Project-defined 0–100: login +5, probe +10, multi-type +15, high alert +20, repeat +10; LOW 0–20 … CRITICAL 76–100. Not an industry standard.
+16. HelloHoney Risk Score? — Project-defined 0–100: login +5, probe +10, multi-type +15, high alert +20, repeat +10; LOW 0–20 … CRITICAL 76–100. Not an industry standard.
 17. What is an IOC? — Indicator (IP/domain/URL/hash/username) analysts track; lab-only list here.
 18. False positive handling? — Alert status FALSE_POSITIVE; tune thresholds/disable rules.
 19. JWT auth flow? — Login → signed token → Bearer header → middleware verifies → RBAC by role.

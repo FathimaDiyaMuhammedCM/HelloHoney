@@ -1,4 +1,4 @@
-// PROJECT-DEFINED HoneyWatch Risk Score (not an industry standard).
+// PROJECT-DEFINED HelloHoney Risk Score (not an industry standard).
 function scoreForEvent(ev) {
   switch (ev.eventType) {
     case 'FAILED_LOGIN': return 5;
@@ -18,7 +18,7 @@ function levelFor(score) {
   return 'LOW';
 }
 
-// HoneyWatch Risk Score: capped at 100
+// HelloHoney Risk Score: capped at 100
 function computeAttackerRisk({ failedLogins = 0, portProbes = 0, webProbes = 0, attackTypes = 0, highAlerts = 0, repeated = 0 }) {
   let score = failedLogins * 5 + portProbes * 10 + webProbes * 10;
   if (attackTypes > 1) score += 15;

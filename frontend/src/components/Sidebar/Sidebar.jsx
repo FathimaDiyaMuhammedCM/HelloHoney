@@ -20,7 +20,7 @@ export default function Sidebar() {
   const { user } = useAuth();
   return (
     <div className="sidebar">
-      <h2>🛡️ HONEYWATCH</h2>
+      <h2>🛡️ HELLOHONEY</h2>
       <span className="lab">LAB / SIMULATION</span>
       <nav>
         {LINKS.filter(([, , roles]) => roles.includes(user?.role)).map(([to, label]) => (

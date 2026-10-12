@@ -14,14 +14,35 @@ const sys = require('../controllers/systemController');
 const aud = require('../controllers/auditController');
 const logUp = require('../controllers/logUploadController');
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 
 const r = express.Router();
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+// Strict rate limit for authentication endpoints to prevent brute force
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many authentication attempts, please try again later' }
+});
 
-// auth
-r.post('/auth/login', auth.login);
-r.post('/auth/register', auth.register);
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max upload
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.log', '.txt', '.csv', '.tsv', '.json', '.ndjson', '.pcap', '.syslog', '.out'];
+    const ext = require('path').extname(file.originalname || '').toLowerCase();
+    if (allowed.includes(ext)) return cb(null, true);
+    const err = new Error('Unsupported file type. Allowed: ' + allowed.join(', '));
+    err.status = 400;
+    cb(err);
+  }
+});
+
+// auth (rate-limited to prevent credential brute force)
+r.post('/auth/login', authLimiter, auth.login);
+r.post('/auth/register', authLimiter, auth.register);
 r.get('/auth/me', authRequired, auth.me);
 
 // ingest (lab honeypot -> backend; protected by optional key, open on localhost lab)
@@ -68,6 +89,8 @@ r.patch('/iocs/:id', authRequired, requireRoles('ADMIN', 'ANALYST'), iocs.update
 r.delete('/iocs/:id', authRequired, requireRoles('ADMIN'), iocs.remove);
 
 // reports
+r.post('/reports/preview', authRequired, rep.previewReport);
+r.get('/reports/preview', authRequired, rep.previewReport);
 r.post('/reports/pdf', authRequired, rep.pdfReport);
 r.get('/reports/events/csv', authRequired, rep.csvExport('events'));
 r.get('/reports/alerts/csv', authRequired, rep.csvExport('alerts'));
@@ -83,9 +106,9 @@ r.post('/simulation/port-scan', authRequired, sim.portScan);
 r.post('/simulation/web-probe', authRequired, sim.webProbe);
 r.post('/simulation/multi-stage', authRequired, sim.multiStage);
 
-// system
+// system (health is public for probes; status exposes internal state -> auth required)
 r.get('/health', sys.health);
-r.get('/system/status', sys.status);
+r.get('/system/status', authRequired, sys.status);
 
 // audit
 r.get('/audit-logs', authRequired, requireRoles('ADMIN', 'ANALYST'), aud.list);

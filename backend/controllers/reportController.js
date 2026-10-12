@@ -13,11 +13,115 @@ const fs = require('fs');
 
 function buildFilter(query) {
   const f = {};
-  if (query.severity) f.severity = query.severity;
-  if (query.sourceIP) f.sourceIP = query.sourceIP;
-  if (query.service) f.service = query.service;
-  if (query.from || query.to) f.timestamp = { ...(query.from ? { $gte: new Date(query.from) } : {}), ...(query.to ? { $lte: new Date(query.to) } : {}) };
+  // Only accept primitive strings (blocks NoSQL operator objects in filters)
+  if (typeof query.severity === 'string' && query.severity) f.severity = query.severity;
+  if (typeof query.sourceIP === 'string' && query.sourceIP) f.sourceIP = query.sourceIP;
+  if (typeof query.service === 'string' && query.service) f.service = query.service;
+  if ((typeof query.from === 'string' && query.from) || (typeof query.to === 'string' && query.to)) {
+    const ts = {};
+    if (typeof query.from === 'string' && query.from) ts.$gte = new Date(query.from);
+    if (typeof query.to === 'string' && query.to) ts.$lte = new Date(query.to);
+    f.timestamp = ts;
+  }
   return f;
+}
+
+async function previewReport(req, res, next) {
+  try {
+    const { type = 'Security Summary', from, to, severity, sourceIP, service } = req.body || req.query || {};
+    const ef = buildFilter({ from, to, severity, sourceIP, service });
+    const af = buildFilter({ from, to, severity, sourceIP });
+    const [events, alerts, incidents, attackers, rules] = await Promise.all([
+      Event.find(ef).sort('-timestamp').limit(200).lean(),
+      Alert.find(af).sort('-timestamp').limit(200).lean(),
+      Incident.find().sort('-createdAt').limit(50).lean(),
+      Attacker.find().sort('-riskScore').limit(10).lean(),
+      DetectionRule.find().lean()
+    ]);
+
+    const reportId = uid('RPT');
+    const byType = {};
+    alerts.forEach(a => { byType[a.attackType] = (byType[a.attackType] || 0) + 1; });
+    const totalAlertsCount = alerts.length;
+    const attacksByType = Object.entries(byType).map(([attackType, count]) => ({
+      attackType,
+      count,
+      percentage: totalAlertsCount ? Math.round((count / totalAlertsCount) * 100) : 0
+    }));
+
+    const avgRisk = attackers.length ? Math.round(attackers.reduce((s, a) => s + a.riskScore, 0) / attackers.length) : 0;
+    let riskLevel = 'LOW';
+    if (avgRisk > 75) riskLevel = 'CRITICAL';
+    else if (avgRisk > 50) riskLevel = 'HIGH';
+    else if (avgRisk > 20) riskLevel = 'MEDIUM';
+
+    const recommendations = [
+      'Block repeat offender IPs at the lab firewall.',
+      'Rotate exposed test credentials and enforce key-based SSH authentication.',
+      'Review brute-force alerts promptly and calibrate rule rate thresholds.',
+      'Keep honeypot sensors logically isolated on a dedicated subnet.'
+    ];
+
+    res.json({
+      meta: {
+        reportId,
+        type,
+        generatedAt: new Date().toISOString(),
+        generatedBy: req.user?.name || 'SOC Operator',
+        period: { from: from || 'Beginning of time', to: to || 'Present' },
+        filters: { type, from, to, severity, sourceIP, service }
+      },
+      summary: {
+        totalEvents: events.length,
+        totalAlerts: alerts.length,
+        totalIncidents: incidents.length,
+        trackedAttackers: attackers.length,
+        avgRisk,
+        riskLevel
+      },
+      attacksByType,
+      topAttackers: attackers.map(a => ({
+        sourceIP: a.sourceIP,
+        totalEvents: a.totalEvents,
+        riskScore: a.riskScore,
+        riskLevel: a.riskLevel || (a.riskScore > 75 ? 'CRITICAL' : a.riskScore > 50 ? 'HIGH' : a.riskScore > 20 ? 'MEDIUM' : 'LOW'),
+        attackTypes: a.attackTypes || []
+      })),
+      recentAlerts: alerts.slice(0, 20).map(a => ({
+        id: a._id,
+        severity: a.severity,
+        attackType: a.attackType,
+        sourceIP: a.sourceIP,
+        status: a.status,
+        timestamp: a.timestamp
+      })),
+      recentIncidents: incidents.slice(0, 10).map(i => ({
+        incidentId: i.incidentId,
+        title: i.title,
+        severity: i.severity,
+        status: i.status,
+        createdAt: i.createdAt
+      })),
+      rules: rules.map(r => ({
+        name: r.name,
+        category: r.category,
+        threshold: r.threshold,
+        timeWindow: r.timeWindow,
+        enabled: r.enabled
+      })),
+      sampleEvents: events.slice(0, 20).map(e => ({
+        _id: e._id,
+        timestamp: e.timestamp,
+        sourceIP: e.sourceIP,
+        service: e.service,
+        eventType: e.eventType,
+        severity: e.severity
+      })),
+      recommendations
+    });
+  } catch (e) {
+    next(e);
+  }
 }
 
 async function pdfReport(req, res, next) {
@@ -75,7 +179,7 @@ async function pdfReport(req, res, next) {
     doc.fontSize(10);
     rules.forEach(r => doc.text(`- ${r.name}: threshold ${r.threshold}/${r.timeWindow}s [${r.enabled ? 'enabled' : 'disabled'}]`));
     doc.moveDown();
-    doc.fontSize(14).text('RISK ANALYSIS (HoneyWatch Risk Score, project-defined 0-100)');
+    doc.fontSize(14).text('RISK ANALYSIS (HelloHoney Risk Score, project-defined 0-100)');
     doc.fontSize(10).text('0-20 LOW, 21-50 MEDIUM, 51-75 HIGH, 76-100 CRITICAL.');
     const avg = attackers.length ? Math.round(attackers.reduce((s, a) => s + a.riskScore, 0) / attackers.length) : 0;
     doc.text(`Average attacker risk: ${avg}`);
@@ -111,4 +215,4 @@ function csvExport(kind) {
   };
 }
 
-module.exports = { pdfReport, csvExport };
+module.exports = { previewReport, pdfReport, csvExport };

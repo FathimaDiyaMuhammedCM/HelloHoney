@@ -16,7 +16,7 @@ async function getOne(req, res, next) {
     const attacker = await Attacker.findOne({ sourceIP: ip }).lean();
     if (!attacker) return res.status(404).json({ error: 'Attacker not found' });
     const [events, alerts, incidents] = await Promise.all([
-      Event.find({ sourceIP: ip }).sort('-timestamp').limit(100).lean(),
+      Event.find({ sourceIP: ip }).select('-passwordEcho').sort('-timestamp').limit(100).lean(),
       Alert.find({ sourceIP: ip }).sort('-timestamp').limit(50).lean(),
       Incident.find({ sourceIPs: ip }).sort('-createdAt').limit(20).lean()
     ]);

@@ -20,11 +20,21 @@ async function run() {
 
   await Promise.all([User.deleteMany({}), Event.deleteMany({}), Alert.deleteMany({}), Incident.deleteMany({}), Attacker.deleteMany({}), DetectionRule.deleteMany({}), IOC.deleteMany({})]);
 
-  await User.create([
-    { name: 'Admin', email: 'admin@hellohoney.local', passwordHash: await bcrypt.hash('Admin123!', 10), role: 'ADMIN' },
-    { name: 'Analyst', email: 'analyst@hellohoney.local', passwordHash: await bcrypt.hash('Analyst123!', 10), role: 'ANALYST' },
-    { name: 'Viewer', email: 'viewer@hellohoney.local', passwordHash: await bcrypt.hash('Viewer123!', 10), role: 'VIEWER' }
-  ]);
+  // Seed users with passwords from environment variables — never hardcoded.
+  // Set SEED_ADMIN_PASSWORD / SEED_ANALYST_PASSWORD / SEED_VIEWER_PASSWORD before running.
+  const adminPw = process.env.SEED_ADMIN_PASSWORD;
+  const analystPw = process.env.SEED_ANALYST_PASSWORD;
+  const viewerPw = process.env.SEED_VIEWER_PASSWORD;
+  if (adminPw && analystPw && viewerPw) {
+    await User.create([
+      { name: 'Admin', email: 'admin@hellohoney.local', passwordHash: await bcrypt.hash(adminPw, 12), role: 'ADMIN' },
+      { name: 'Analyst', email: 'analyst@hellohoney.local', passwordHash: await bcrypt.hash(analystPw, 12), role: 'ANALYST' },
+      { name: 'Viewer', email: 'viewer@hellohoney.local', passwordHash: await bcrypt.hash(viewerPw, 12), role: 'VIEWER' }
+    ]);
+    console.log('[SEED] Users created from SEED_*_PASSWORD environment variables.');
+  } else {
+    console.warn('[SEED] Skipping user creation — set SEED_ADMIN_PASSWORD, SEED_ANALYST_PASSWORD, and SEED_VIEWER_PASSWORD to create demo users.');
+  }
 
   await DetectionRule.insertMany([
     { name: 'SSH Brute Force', description: 'More than 5 failed SSH logins from same IP within 60s', eventType: 'FAILED_LOGIN', threshold: 5, timeWindow: 60, severity: 'HIGH', enabled: true, ruleType: 'BRUTE_FORCE', attackType: 'SSH Brute Force', autoCreateIncident: true },

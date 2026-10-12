@@ -14,3 +14,11 @@ venv/
 .DS_Store
 Thumbs.db
 
+# runtime logs / temp
+*.log
+backend_run.log
+backend_err.log
+
+# vite config bundle temp
+*.timestamp-*.mjs
+

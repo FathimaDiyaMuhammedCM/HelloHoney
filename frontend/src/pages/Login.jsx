@@ -3,13 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 
 export default function Login() {
-  const [email, setEmail] = useState('admin@hellohoney.local');
-  const [password, setPassword] = useState('Admin123!');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [err, setErr] = useState('');
   const { login } = useAuth();
   const nav = useNavigate();
   const submit = async (e) => {
     e.preventDefault();
+    setErr('');
     try { await login(email, password); nav('/'); }
     catch (err) { setErr('Invalid credentials'); }
   };
@@ -20,7 +21,6 @@ export default function Login() {
       <div><input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} style={{ width: '100%' }} /></div>
       {err && <div style={{ color: 'var(--danger)' }}>{err}</div>}
       <button className="btn" type="submit">Login</button>
-      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>admin@hellohoney.local / Admin123!</div>
     </form></div>;
 }
 export function NotFound() {
